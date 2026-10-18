@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { projectsQuery, brandKitQuery, suggestionsQuery, contentQuery, highlightsQuery } from "@/lib/data";
@@ -27,15 +27,28 @@ const panel = "rounded-2xl border border-border bg-card p-6 shadow-sm";
 const goals = ["vender", "crescer", "educar", "autoridade", "divulgar serviços", "relacionamento"];
 
 function InstaStudio() {
+  const client = useQueryClient();
+  const previousUser = useRef<string | null>(null);
+  const [recovery, setRecovery] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
   useEffect(() => {
     let active = true;
-    supabase.auth.getSession().then(({data}) => { if(active){ setSession(data.session);setChecking(false); } }).catch(()=>setChecking(false));
-    const {data:{subscription}}=supabase.auth.onAuthStateChange((_event, next)=>setSession(next));
+    supabase.auth.getSession().then(({data}) => {
+      if(active) { previousUser.current = data.session?.user.id ?? null; setSession(data.session); setChecking(false); }
+    }).catch((error:unknown)=>{ if(active) {setChecking(false);toast.error(error instanceof Error ? error.message : "Erro ao verificar sessão.");} });
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((event, next)=>{
+      if (!active) return;
+      const newUser = next?.user.id ?? null;
+      if (previousUser.current && previousUser.current !== newUser) client.clear();
+      previousUser.current = newUser;
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
+      if (event === "SIGNED_OUT") setRecovery(false);
+      setSession(next);
+    });
     return ()=>{active=false;subscription.unsubscribe();};
-  }, []);
-  return <><Toaster richColors position="top-right"/>{checking ? <div className="grid min-h-screen place-items-center"><Loader2 className="animate-spin text-primary"/></div> : session ? <Workspace key={session.user.id} userId={session.user.id} /> : <AuthScreen />}</>;
+  }, [client]);
+  return <><Toaster richColors position="top-right"/>{checking ? <div className="grid min-h-screen place-items-center"><Loader2 className="animate-spin text-primary"/></div> : recovery && session ? <RecoveryScreen onDone={()=>setRecovery(false)}/> : session ? <Workspace key={session.user.id} userId={session.user.id} /> : <AuthScreen />}</>;
 }
 
 function AuthScreen() {
@@ -43,6 +56,17 @@ function AuthScreen() {
   const [email,setEmail]=useState("");
   const [password,setPassword]=useState("");
   const [busy,setBusy]=useState(false);
+  async function googleLogin(){
+    setBusy(true);
+    try{
+      const {error}=await supabase.auth.signInWithOAuth({
+        provider:"google",
+        options:{redirectTo:window.location.origin + "/"},
+      });
+      if(error) throw error;
+    }catch(error){toast.error(error instanceof Error ? error.message : "Não foi possível iniciar o login Google.");}
+    finally{setBusy(false);}
+  }
   async function submit(e:FormEvent){e.preventDefault();setBusy(true);try{
     if(mode==="reset"){const {error}=await supabase.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin});if(error)throw error;toast.success("Confira seu e-mail para recuperar a senha.");}
     else if(mode==="signup"){const {error}=await supabase.auth.signUp({email,password});if(error)throw error;toast.success("Cadastro solicitado. Confira seu e-mail se a confirmação estiver habilitada.");}
@@ -60,8 +84,37 @@ function AuthScreen() {
       <form onSubmit={submit} className="space-y-4"><label className="block text-sm font-semibold">E-mail<input className={inputClass+" mt-2"} type="email" required autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="voce@empresa.com"/></label>
       {mode!=="reset"&&<label className="block text-sm font-semibold">Senha<input className={inputClass+" mt-2"} type="password" required minLength={6} autoComplete={mode==="signin"?"current-password":"new-password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder="Mínimo de 6 caracteres"/></label>}
       <button className={btn+" w-full"} disabled={busy}>{busy?<Loader2 className="size-4 animate-spin"/>:null}{mode==="signin"?"Entrar":mode==="signup"?"Criar conta":"Enviar link de recuperação"}<ArrowRight className="size-4"/></button></form>
+      {mode!=="reset"&&<><div className="my-6 flex items-center gap-3 text-xs text-muted-foreground"><div className="h-px flex-1 bg-border"/>ou continue com<div className="h-px flex-1 bg-border"/></div>
+      <button type="button" aria-label="Entrar com sua conta Google" disabled={busy} onClick={googleLogin} className="inline-flex w-full items-center justify-center gap-3 rounded-xl border border-border bg-card px-5 py-3 text-sm font-semibold transition hover:bg-muted disabled:opacity-50"><span aria-hidden="true" className="font-extrabold text-lg text-[#4285F4]">G</span>Continuar com Google</button></>}
       <div className="mt-6 flex flex-wrap justify-between gap-3 text-sm"><button onClick={()=>setMode(mode==="signup"?"signin":"signup")} className="font-semibold text-primary">{mode==="signup"?"Já tenho conta": "Criar uma conta"}</button><button onClick={()=>setMode(mode==="reset"?"signin":"reset")} className="text-muted-foreground">{mode==="reset"?"Voltar ao login":"Esqueci minha senha"}</button></div>
     </div></div></div>;
+}
+
+function RecoveryScreen({onDone}:{onDone:()=>void}){
+  const [password,setPassword]=useState("");
+  const [confirm,setConfirm]=useState("");
+  const [busy,setBusy]=useState(false);
+  async function reset(e:FormEvent){
+    e.preventDefault();
+    if(password.length<8){toast.error("A senha deve ter pelo menos 8 caracteres.");return;}
+    if(password!==confirm){toast.error("As senhas não coincidem.");return;}
+    setBusy(true);
+    try{
+      const {error}=await supabase.auth.updateUser({password});
+      if(error) throw error;
+      toast.success("Senha alterada com sucesso.");
+      onDone();
+    }catch(error){toast.error(error instanceof Error ? error.message : "Erro ao alterar a senha.");}
+    finally{setBusy(false);}
+  }
+  return <div className="grid min-h-screen place-items-center bg-background p-6"><form onSubmit={reset} className="w-full max-w-md space-y-5 rounded-2xl border border-border bg-card p-8 shadow-sm">
+    <div className="flex items-center gap-2 text-2xl font-bold text-primary"><Sparkles/>InstaStudio AI</div>
+    <h1 className="text-2xl font-bold">Definir nova senha</h1>
+    <p className="text-sm text-muted-foreground">Escolha uma nova senha segura para sua conta.</p>
+    <label className="block text-sm font-semibold">Nova senha<input autoComplete="new-password" type="password" minLength={8} required value={password} onChange={e=>setPassword(e.target.value)} className={inputClass+" mt-2"}/></label>
+    <label className="block text-sm font-semibold">Confirmar senha<input autoComplete="new-password" type="password" minLength={8} required value={confirm} onChange={e=>setConfirm(e.target.value)} className={inputClass+" mt-2"}/></label>
+    <button className={btn+" w-full"} disabled={busy}>{busy?"Salvando…":"Atualizar senha"}</button>
+  </form></div>;
 }
 
 function Workspace({userId}:{userId:string}) {
