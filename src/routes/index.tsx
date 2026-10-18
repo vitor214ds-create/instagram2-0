@@ -61,14 +61,14 @@ function AuthScreen() {
   const [googleMessage,setGoogleMessage]=useState("");
   useEffect(()=>{
     const ctrl=new AbortController();
-    void checkGoogleProviderStatus(import.meta.env.VITE_SUPABASE_URL ?? "",import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",{signal:ctrl.signal}).then(status=>{if(!ctrl.signal.aborted)setGoogleStatus(status);});
+    void checkGoogleProviderStatus(import.meta.env["VITE_SUPABASE_URL"] ?? "",import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] ?? "",{signal:ctrl.signal}).then(status=>{if(!ctrl.signal.aborted)setGoogleStatus(status);});
     return ()=>ctrl.abort();
   },[]);
   async function googleLogin(){
     setBusy(true);
     setGoogleMessage("");
     try{
-      const status=await checkGoogleProviderStatus(import.meta.env.VITE_SUPABASE_URL ?? "",import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "");
+      const status=await checkGoogleProviderStatus(import.meta.env["VITE_SUPABASE_URL"] ?? "",import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] ?? "");
       setGoogleStatus(status);
       if(status!=="enabled"){
         setGoogleMessage(status==="disabled"?"O login com Google ainda não foi habilitado no Supabase Auth do projeto. Ative Google em Authentication → Providers. Enquanto isso, use e-mail e senha.":"Não foi possível confirmar a disponibilidade do login com Google. Tente novamente ou utilize e-mail e senha.");
