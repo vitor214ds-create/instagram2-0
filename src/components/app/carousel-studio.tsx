@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, Copy, Download, Plus, Save, Sparkles, Trash2, ChevronUp, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import type { ContentItem, Slide } from "@/lib/data";
+import { createVisualCarousel } from "@/lib/carousel-ai.functions";
+import { generateCarouselImage } from "@/lib/carousel-image.functions";
 import { DEFAULT_SLIDES, TEMPLATES, downloadBlob, slidePng, templateColors, zipPngs, type CarouselFormat, type CarouselTemplate, type SlideDraft } from "@/lib/carousel-design";
 
 type Item = ContentItem & {content_slides?: Slide[]};
@@ -15,6 +17,7 @@ function Visual({slide,index,total,template,palette,handle,format}:{slide:SlideD
  const c=templateColors(template,palette);
  const bg=template==="aurora"?"linear-gradient(145deg,"+c.background+","+c.accent+","+c.secondary+")":template==="sunset"?"linear-gradient(140deg,"+c.background+","+c.secondary+")":c.background;
  return <div className={"relative flex w-full flex-col overflow-hidden rounded-2xl p-[9%] shadow-2xl "+(format==="portrait"?"aspect-[4/5]":"aspect-square")} style={{background:bg,color:c.ink}}>
+   {slide.imageUrl&&<img src={slide.imageUrl} alt="Imagem do slide" className="absolute right-0 top-[22%] h-[58%] w-[60%] rounded-l-2xl object-cover opacity-80"/>}
    <div className="absolute -right-[24%] -top-[18%] h-[62%] w-[85%] rounded-full opacity-20" style={{background:c.accent}}/>
    <div className="relative z-10 flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-[.18em]"><span>{index===0?"Abertura":index===total-1?"Próximo passo":"Ideia "+(index+1)}</span><span>{index+1} / {total}</span></div>
    <div className="relative z-10 my-auto py-8"><div className="mb-5 h-1.5 w-16 rounded-full" style={{background:c.accent}}/><h3 className="break-words text-[clamp(18px,3vw,38px)] font-black leading-tight">{slide.heading||"Seu título aqui"}</h3><p className="mt-5 whitespace-pre-wrap break-words text-[clamp(10px,1.5vw,18px)] leading-relaxed" style={{color:c.subdued}}>{slide.body||"Escreva o conteúdo deste slide."}</p></div>
@@ -34,10 +37,92 @@ export function CarouselStudio({projectId,items,palette,handle}:{projectId:strin
  const [format,setFormat]=useState<CarouselFormat>("portrait");
  const [busy,setBusy]=useState(false);
  const [exporting,setExporting]=useState(false);
+ const [aiMode,setAiMode]=useState<"sales"|"education"|"attention">("education");
+ const [aiTopic,setAiTopic]=useState("");
+ const [aiCount,setAiCount]=useState(5);
+ const [aiBusy,setAiBusy]=useState(false);
+ const [imageBusy,setImageBusy]=useState(false);
+ const [visualDoc,setVisualDoc]=useState<{version:number;mode?:string;slides?:Array<{slideId?:string;prompt?:string;path?:string;background?:string;composition?:string}>}|null>(null);
  const slide=slides[active]??slides[0]!;
  const reset=()=>{setId(null);setTitle("");setCaption("");setHashtags("");setSlides(DEFAULT_SLIDES.map(s=>({...s})));setActive(0);setEditing(true);};
  const open=(item:Item)=>{setId(item.id);setTitle(item.title);setCaption(item.caption);setHashtags(item.hashtags);const existing=[...(item.content_slides??[])].sort((a,b)=>a.position-b.position);setSlides(existing.length?existing.map(s=>({id:s.id,heading:s.heading,body:s.body})):[{heading:item.title,body:""},...DEFAULT_SLIDES.slice(1,3)]);setActive(0);setEditing(true);};
  const refresh=()=>qc.invalidateQueries({queryKey:["content",projectId]});
+ useEffect(()=>{
+   if(!id)return;
+   let cancelled=false;
+   (async()=>{
+     const {data}=await supabase.from("design_documents").select("layers").eq("project_id",projectId).eq("content_id",id).maybeSingle();
+     if(cancelled)return;
+     const raw=data?.layers;
+     if(!raw||typeof raw!=="object"||Array.isArray(raw))return;
+     const doc=raw as {version?:number;mode?:string;slides?:Array<{slideId?:string;prompt?:string;path?:string;background?:string;composition?:string}>};
+     if(doc.version!==2||!Array.isArray(doc.slides))return;
+     setVisualDoc({version:2,mode:doc.mode,slides:doc.slides});
+     const updated=await Promise.all(doc.slides.map(async entry=>{
+       if(!entry.path)return {...entry,url:""};
+       const {data:signed}=await supabase.storage.from("media").createSignedUrl(entry.path,3600);
+       return {...entry,url:signed?.signedUrl??""};
+     }));
+     if(cancelled)return;
+     setSlides(previous=>previous.map((slide,index)=>{
+       const match=updated.find(x=>x.slideId===slide.id)??updated[index];
+       return {...slide,visualPrompt:match?.prompt||"",imagePath:match?.path||"",imageUrl:match?.url||""};
+     }));
+   })();
+   return()=>{cancelled=true;};
+ },[id,projectId]);
+ async function createWithAi(){
+  if(aiTopic.trim().length<5){toast.error("Descreva o tema com pelo menos cinco caracteres.");return;}
+  if(!window.confirm("Gerar um carrossel por IA pode consumir créditos do Lovable. Deseja continuar?"))return;
+  setAiBusy(true);
+  try{
+    const response=await createVisualCarousel({data:{projectId,mode:aiMode,topic:aiTopic.trim(),count:aiCount}});
+    await refresh();toast.success("Carrossel e direção de arte criados.");
+    const {data:item}=await supabase.from("content_items").select("*,content_slides(*)").eq("id",response.contentId).single();
+    if(item)open(item as Item);
+  }catch(error){toast.error(error instanceof Error?error.message:"Não foi possível gerar o carrossel.");}
+  finally{setAiBusy(false);}
+ }
+ async function createImage(){
+  if(!id||!slide.id){toast.error("Salve e reabra o carrossel antes de gerar a imagem.");return;}
+  const prompt=(slide.visualPrompt||"Imagem editorial profissional sobre "+slide.heading+". "+slide.body).trim();
+  if(!window.confirm("Gerar uma imagem com inteligência artificial pode consumir créditos. Confirmar geração deste slide?"))return;
+  setImageBusy(true);
+  try{
+    const response=await generateCarouselImage({data:{projectId,contentId:id,slideId:slide.id,prompt}});
+    const docs=visualDoc?.slides??[];
+    const next=slides.map((item,index)=>({slideId:item.id,prompt:item.visualPrompt||docs[index]?.prompt||"",path:item.id===slide.id?response.path:item.imagePath||docs[index]?.path||"",background:docs[index]?.background||"",composition:docs[index]?.composition||""}));
+    const {error}=await supabase.from("design_documents").upsert({project_id:projectId,content_id:id,width:1080,height:1350,layers:{version:2,mode:visualDoc?.mode||"education",slides:next}},{onConflict:"content_id"});
+    if(error)throw error;
+    const {data:signed,error:signError}=await supabase.storage.from("media").createSignedUrl(response.path,3600);
+    if(signError)throw signError;
+    setSlides(previous=>previous.map((x,index)=>index===active?{...x,imagePath:response.path,imageUrl:signed.signedUrl,visualPrompt:prompt}:x));
+    setVisualDoc({version:2,mode:visualDoc?.mode||"education",slides:next});
+    toast.success("Imagem gerada e aplicada no slide.");
+  }catch(error){toast.error(error instanceof Error?error.message:"Não foi possível gerar a imagem.");}
+  finally{setImageBusy(false);}
+ }
+ async function uploadSlideImage(file:File){
+   if(!id||!slide.id){toast.error("Salve e reabra este carrossel antes de adicionar uma imagem.");return;}
+   if(!["image/png","image/jpeg","image/webp"].includes(file.type)||file.size>10*1024*1024){toast.error("Escolha PNG, JPG ou WEBP de até 10 MB.");return;}
+   setImageBusy(true);
+   try{
+     const extension=file.type==="image/png"?"png":file.type==="image/webp"?"webp":"jpg";
+     const path=projectId+"/carousel/"+id+"/"+slide.id+"-"+crypto.randomUUID()+"."+extension;
+     const uploaded=await supabase.storage.from("media").upload(path,file,{contentType:file.type,upsert:false});
+     if(uploaded.error)throw uploaded.error;
+     const asset=await supabase.from("media_assets").insert({project_id:projectId,storage_path:path,kind:"image",label:file.name});
+     if(asset.error)throw asset.error;
+     const next=slides.map((x,index)=>({slideId:x.id,prompt:x.visualPrompt||visualDoc?.slides?.[index]?.prompt||"",path:index===active?path:x.imagePath||visualDoc?.slides?.[index]?.path||""}));
+     const result=await supabase.from("design_documents").upsert({project_id:projectId,content_id:id,width:1080,height:1350,layers:{version:2,mode:visualDoc?.mode||"education",slides:next}},{onConflict:"content_id"});
+     if(result.error)throw result.error;
+     const {data:sign}=await supabase.storage.from("media").createSignedUrl(path,3600);
+     setSlides(previous=>previous.map((x,index)=>index===active?{...x,imagePath:path,imageUrl:sign?.signedUrl||""}:x));
+     setVisualDoc({version:2,mode:visualDoc?.mode||"education",slides:next});
+     toast.success("Imagem enviada.");
+   }catch(error){toast.error(error instanceof Error?error.message:"Falha ao enviar imagem.");}finally{setImageBusy(false);}
+ }
+
  const change=(key:"heading"|"body",value:string)=>setSlides(old=>old.map((s,i)=>i===active?{...s,[key]:value}:s));
  const add=()=>{if(slides.length>=10)return;setSlides(old=>[...old,{heading:"Novo slide",body:"Adicione aqui o conteúdo."}]);setActive(slides.length);};
  const remove=()=>{if(slides.length<=3)return;setSlides(old=>old.filter((_,i)=>i!==active));setActive(Math.max(0,active-1));};
