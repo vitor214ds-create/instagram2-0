@@ -1,6 +1,6 @@
 export type CarouselTemplate = "aurora" | "noir" | "paper" | "sunset" | "editorial";
 export type CarouselFormat = "portrait" | "square";
-export type SlideDraft = { id?: string; heading: string; body: string };
+export type SlideDraft = { id?: string; heading: string; body: string; imagePath?: string; imageUrl?: string; visualPrompt?: string };
 
 export const TEMPLATES: { id: CarouselTemplate; name: string; description: string }[] = [
   { id: "aurora", name: "Aurora", description: "Gradientes e luz suave" },
@@ -72,7 +72,7 @@ function fittedText(ctx: CanvasRenderingContext2D, text: string, maxWidth: numbe
 }
 export function paintCarouselSlide(ctx: CanvasRenderingContext2D, slide: SlideDraft, options: {
   index: number; total: number; template: CarouselTemplate; palette: string[];
-  handle: string; format: CarouselFormat;
+  handle: string; format: CarouselFormat; image?: HTMLImageElement;
 }) {
   const { width: W, height: H } = formatDimensions(options.format);
   const colors = templateColors(options.template, options.palette);
@@ -107,6 +107,17 @@ export function paintCarouselSlide(ctx: CanvasRenderingContext2D, slide: SlideDr
     ctx.beginPath(); ctx.moveTo(80, H - 165); ctx.lineTo(W - 80, H - 165); ctx.stroke();
   }
 
+  if (options.image) {
+    const img = options.image;
+    const x = W * 0.48, y = H * 0.26, w = W * 0.47, h = H * 0.48;
+    ctx.save();
+    ctx.beginPath();ctx.roundRect(x,y,w,h,40);ctx.clip();
+    const scale=Math.max(w/img.naturalWidth,h/img.naturalHeight);
+    const iw=img.naturalWidth*scale,ih=img.naturalHeight*scale;
+    ctx.drawImage(img,x+(w-iw)/2,y+(h-ih)/2,iw,ih);ctx.restore();
+    ctx.fillStyle=colors.background;
+    ctx.globalAlpha=0.82;ctx.fillRect(0,0,W*0.57,H);ctx.globalAlpha=1;
+  }
   const margin = options.template === "paper" ? 142 : 105;
   const maxWidth = W - margin * 2;
   const top = options.format === "portrait" ? 235 : 172;
@@ -147,7 +158,9 @@ export async function slidePng(slide: SlideDraft, options: Parameters<typeof pai
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("O navegador não conseguiu preparar o editor de imagem.");
-  paintCarouselSlide(ctx, slide, options);
+  let image:HTMLImageElement|undefined;
+  if(slide.imageUrl){image=new Image();image.crossOrigin="anonymous";await new Promise<void>((resolve,reject)=>{image!.onload=()=>resolve();image!.onerror=()=>reject(new Error("A imagem não está disponível para exportação."));image!.src=slide.imageUrl!;});}
+  paintCarouselSlide(ctx,slide,{...options,image});
   return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Erro ao criar PNG.")), "image/png"));
 }
 export function downloadBlob(blob: Blob, filename: string) {
