@@ -53,56 +53,184 @@ function InstaStudio() {
 }
 
 function AuthScreen() {
-  const [mode,setMode]=useState<"signin"|"signup"|"reset">("signin");
-  const [email,setEmail]=useState("");
-  const [password,setPassword]=useState("");
-  const [busy,setBusy]=useState(false);
-  const [googleStatus,setGoogleStatus]=useState<ProviderStatus>("unavailable");
-  const [googleMessage,setGoogleMessage]=useState("");
-  useEffect(()=>{
-    const ctrl=new AbortController();
-    void checkGoogleProviderStatus(import.meta.env["VITE_SUPABASE_URL"] ?? "",import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] ?? "",{signal:ctrl.signal}).then(status=>{if(!ctrl.signal.aborted)setGoogleStatus(status);});
-    return ()=>ctrl.abort();
-  },[]);
-  async function googleLogin(){
+  const [mode, setMode] = useState<"signin" | "signup" | "reset" | "magic">("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [linkSent, setLinkSent] = useState(false);
+  const [sentTo, setSentTo] = useState("");
+  const [googleStatus, setGoogleStatus] = useState<ProviderStatus>("unavailable");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void checkGoogleProviderStatus(
+      import.meta.env["VITE_SUPABASE_URL"] ?? "",
+      import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] ?? "",
+      { signal: controller.signal },
+    ).then((status) => { if (!controller.signal.aborted) setGoogleStatus(status); });
+    return () => controller.abort();
+  }, []);
+
+  const changeMode = (next: typeof mode) => {
+    setMode(next);
+    setLinkSent(false);
+    setPassword("");
+  };
+
+  async function googleLogin() {
     setBusy(true);
-    setGoogleMessage("");
-    try{
-      const status=await checkGoogleProviderStatus(import.meta.env["VITE_SUPABASE_URL"] ?? "",import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] ?? "");
+    try {
+      // Server configuration can change between the initial page load and a click.
+      const status = await checkGoogleProviderStatus(
+        import.meta.env["VITE_SUPABASE_URL"] ?? "",
+        import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] ?? "",
+      );
       setGoogleStatus(status);
-      if(status!=="enabled"){
-        setGoogleMessage(status==="disabled"?"O login com Google ainda não foi habilitado no Supabase Auth do projeto. Ative Google em Authentication → Providers. Enquanto isso, use e-mail e senha.":"Não foi possível confirmar a disponibilidade do login com Google. Tente novamente ou utilize e-mail e senha.");
+      if (status !== "enabled") {
+        toast.error("Google indisponível. Use a opção Entrar com link no e-mail.");
         return;
       }
-      const {error}=await supabase.auth.signInWithOAuth({
-        provider:"google",
-        options:{redirectTo:window.location.origin + "/"},
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.origin + "/" },
       });
-      if(error) throw error;
-    }catch(error){const message=error instanceof Error ? error.message : "Não foi possível iniciar o login Google.";setGoogleMessage(message);toast.error(message);}
-    finally{setBusy(false);}
+      if (error) throw error;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível entrar com Google.");
+    } finally {
+      setBusy(false);
+    }
   }
-  async function submit(e:FormEvent){e.preventDefault();setBusy(true);try{
-    if(mode==="reset"){const {error}=await supabase.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin});if(error)throw error;toast.success("Confira seu e-mail para recuperar a senha.");}
-    else if(mode==="signup"){const {error}=await supabase.auth.signUp({email,password});if(error)throw error;toast.success("Cadastro solicitado. Confira seu e-mail se a confirmação estiver habilitada.");}
-    else {const {error}=await supabase.auth.signInWithPassword({email,password});if(error)throw error;}
-  }catch(e){toast.error((e as Error).message)}finally{setBusy(false)}}
-  return <div className="min-h-screen bg-background lg:grid lg:grid-cols-2">
-    <div className="hidden flex-col justify-between bg-gradient-to-br from-violet-800 via-violet-700 to-fuchsia-700 p-14 text-white lg:flex">
-      <div className="flex items-center gap-3 text-xl font-bold"><div className="rounded-xl bg-white/20 p-2"><Sparkles/></div>InstaStudio AI</div>
-      <div><div className="mb-7 inline-flex rounded-full border border-white/30 px-4 py-2 text-xs font-semibold uppercase tracking-[0.15em]">Seu estúdio criativo inteligente</div><h1 className="max-w-lg text-6xl font-extrabold leading-tight">Sua próxima grande marca começa aqui.</h1><p className="mt-6 max-w-md text-lg text-white/80">Planeje seus perfis, organize sua identidade, crie conteúdo e transforme ideias em um feed de impacto.</p></div>
-      <div className="text-sm text-white/70">Crie com intenção. Publique com consistência.</div>
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const normalizedEmail = email.trim().toLowerCase();
+      if (mode === "magic") {
+        const { error } = await supabase.auth.signInWithOtp({
+          email: normalizedEmail,
+          options: {
+            emailRedirectTo: window.location.origin + "/",
+            shouldCreateUser: true,
+          },
+        });
+        if (error) throw error;
+        setSentTo(normalizedEmail);
+        setLinkSent(true);
+        toast.success("Link de entrada solicitado. Confira sua caixa de entrada.");
+      } else if (mode === "reset") {
+        const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+          redirectTo: window.location.origin + "/",
+        });
+        if (error) throw error;
+        setSentTo(normalizedEmail);
+        setLinkSent(true);
+        toast.success("E-mail de recuperação solicitado.");
+      } else if (mode === "signup") {
+        const { error } = await supabase.auth.signUp({ email: normalizedEmail, password });
+        if (error) throw error;
+        toast.success("Cadastro solicitado. Confira seu e-mail se for necessária confirmação.");
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
+        if (error) throw error;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível concluir esta solicitação.";
+      toast.error(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const title = mode === "signin" ? "Bem-vindo de volta"
+    : mode === "signup" ? "Crie sua conta"
+    : mode === "magic" ? "Entre sem senha"
+    : "Recuperar senha";
+  const sendFlow = mode === "magic" || mode === "reset";
+
+  return (
+    <div className="min-h-screen bg-background lg:grid lg:grid-cols-2">
+      <div className="hidden flex-col justify-between bg-gradient-to-br from-violet-800 via-violet-700 to-fuchsia-700 p-14 text-white lg:flex">
+        <div className="flex items-center gap-3 text-xl font-bold"><div className="rounded-xl bg-white/20 p-2"><Sparkles /></div>InstaStudio AI</div>
+        <div>
+          <div className="mb-7 inline-flex rounded-full border border-white/30 px-4 py-2 text-xs font-semibold uppercase tracking-[0.15em]">Seu estúdio criativo inteligente</div>
+          <h1 className="max-w-lg text-6xl font-extrabold leading-tight">Sua próxima grande marca começa aqui.</h1>
+          <p className="mt-6 max-w-md text-lg text-white/80">Planeje seus perfis, organize sua identidade, crie conteúdo e transforme ideias em um feed de impacto.</p>
+        </div>
+        <div className="text-sm text-white/70">Crie com intenção. Publique com consistência.</div>
+      </div>
+
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="w-full max-w-md">
+          <div className="mb-12 flex items-center gap-2 text-xl font-bold lg:hidden"><Sparkles className="text-primary" />InstaStudio AI</div>
+          <h1 className="text-3xl font-extrabold">{linkSent && sendFlow ? "Confira seu e-mail" : title}</h1>
+          <p className="mt-2 mb-8 text-muted-foreground">
+            {mode === "magic" ? "Um link seguro enviado ao seu e-mail permite acessar seu perfil sem digitar senha."
+              : "Tudo o que seu Instagram precisa em um só lugar."}
+          </p>
+
+          {linkSent && sendFlow ? (
+            <div role="status" className="space-y-5 rounded-2xl border border-primary/20 bg-card p-6">
+              <div className="grid size-12 place-items-center rounded-xl bg-primary/10 text-primary"><Check size={24}/></div>
+              <h2 className="text-lg font-bold">Enviamos uma solicitação para {sentTo}</h2>
+              <p className="text-sm text-muted-foreground">
+                {mode === "magic" ? "Abra o Gmail ou seu e-mail e clique no link recebido para entrar no InstaStudio AI."
+                  : "Abra seu e-mail e siga as instruções para redefinir a senha."}
+                {" "}Confira também a caixa de spam.
+              </p>
+              <p className="text-xs text-muted-foreground">O envio está sujeito aos limites e à configuração de e-mail do serviço de autenticação.</p>
+              <button type="button" className={soft+" w-full"} onClick={()=>{setLinkSent(false);changeMode("signin");}}>Voltar ao login</button>
+            </div>
+          ) : (
+            <>
+              <form onSubmit={submit} className="space-y-4">
+                <label className="block text-sm font-semibold">E-mail
+                  <input className={inputClass+" mt-2"} type="email" required autoComplete="email"
+                    value={email} onChange={(event)=>setEmail(event.target.value)}
+                    placeholder="seunome@gmail.com" />
+                </label>
+                {!sendFlow && <label className="block text-sm font-semibold">Senha
+                  <input className={inputClass+" mt-2"} type="password" required minLength={6}
+                    autoComplete={mode==="signin"?"current-password":"new-password"}
+                    value={password} onChange={(event)=>setPassword(event.target.value)} placeholder="Sua senha" />
+                </label>}
+                <button type="submit" className={btn+" w-full"} disabled={busy}>
+                  {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+                  {mode==="signin"?"Entrar":mode==="signup"?"Criar conta":mode==="magic"?"Enviar link para meu e-mail":"Enviar recuperação"}
+                  <ArrowRight className="size-4" />
+                </button>
+              </form>
+
+              {(mode==="signin"||mode==="signup") && <>
+                <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground"><div className="h-px flex-1 bg-border"/>ou entre sem senha<div className="h-px flex-1 bg-border"/></div>
+                <button type="button" disabled={busy} onClick={()=>changeMode("magic")}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-primary/25 bg-primary/5 px-5 py-3 text-sm font-semibold text-foreground transition hover:bg-primary/10 disabled:opacity-50">
+                  <span aria-hidden="true" className="text-lg font-extrabold text-primary">@</span>
+                  Entrar com Gmail ou outro e-mail
+                </button>
+                <p className="mt-3 text-center text-xs text-muted-foreground">Receba um link de acesso no seu e-mail. Sem senha e sem configurar uma conta Google.</p>
+                {googleStatus === "enabled" && <button type="button" disabled={busy} onClick={googleLogin}
+                  className="mt-3 inline-flex w-full items-center justify-center gap-3 rounded-xl border border-border bg-card px-5 py-3 text-sm font-semibold transition hover:bg-muted disabled:opacity-50">
+                  <span aria-hidden="true" className="text-lg font-extrabold text-[#4285F4]">G</span>
+                  Continuar com Google
+                </button>}
+              </>}
+              <div className="mt-6 flex flex-wrap justify-between gap-3 text-sm">
+                <button type="button" onClick={()=>changeMode(mode==="signup"?"signin":"signup")} className="font-semibold text-primary">
+                  {mode==="signup"?"Já tenho conta":"Criar uma conta"}
+                </button>
+                <button type="button" onClick={()=>changeMode(mode==="reset"?"signin":"reset")} className="text-muted-foreground">
+                  {mode==="reset"?"Voltar ao login":"Esqueci minha senha"}
+                </button>
+                {mode==="magic"&&<button type="button" className="w-full text-left font-semibold text-primary" onClick={()=>changeMode("signin")}>Entrar com minha senha</button>}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
-    <div className="flex min-h-screen items-center justify-center p-6"><div className="w-full max-w-md">
-      <div className="mb-12 flex items-center gap-2 text-xl font-bold lg:hidden"><Sparkles className="text-primary"/>InstaStudio AI</div>
-      <h2 className="text-3xl font-extrabold">{mode==="signin"?"Bem-vindo de volta":mode==="signup"?"Crie sua conta":"Recuperar senha"}</h2><p className="mt-2 mb-8 text-muted-foreground">Tudo o que seu Instagram precisa em um só lugar.</p>
-      <form onSubmit={submit} className="space-y-4"><label className="block text-sm font-semibold">E-mail<input className={inputClass+" mt-2"} type="email" required autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="voce@empresa.com"/></label>
-      {mode!=="reset"&&<label className="block text-sm font-semibold">Senha<input className={inputClass+" mt-2"} type="password" required minLength={6} autoComplete={mode==="signin"?"current-password":"new-password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder="Mínimo de 6 caracteres"/></label>}
-      <button className={btn+" w-full"} disabled={busy}>{busy?<Loader2 className="size-4 animate-spin"/>:null}{mode==="signin"?"Entrar":mode==="signup"?"Criar conta":"Enviar link de recuperação"}<ArrowRight className="size-4"/></button></form>
-      {mode!=="reset"&&<><div className="my-6 flex items-center gap-3 text-xs text-muted-foreground"><div className="h-px flex-1 bg-border"/>ou continue com<div className="h-px flex-1 bg-border"/></div>
-      <button type="button" aria-label="Entrar com sua conta Google" disabled={busy || googleStatus !== "enabled"} onClick={googleLogin} className="inline-flex w-full items-center justify-center gap-3 rounded-xl border border-border bg-card px-5 py-3 text-sm font-semibold transition hover:bg-muted disabled:opacity-50"><span aria-hidden="true" className="font-extrabold text-lg text-[#4285F4]">G</span>{googleStatus==="disabled"?"Google indisponível no momento":"Continuar com Google"}</button>{googleStatus==="disabled"&&<p role="status" className="mt-3 text-sm text-amber-700 dark:text-amber-400">O acesso pelo Google depende da ativação em Lovable Cloud → Users → Auth settings → Google. Enquanto isso, entre com e-mail e senha.</p>}{googleMessage&&googleStatus!=="disabled"&&<p role="alert" className="mt-3 rounded-lg border border-amber-300/40 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">{googleMessage}</p>}</>}
-      <div className="mt-6 flex flex-wrap justify-between gap-3 text-sm"><button onClick={()=>setMode(mode==="signup"?"signin":"signup")} className="font-semibold text-primary">{mode==="signup"?"Já tenho conta": "Criar uma conta"}</button><button onClick={()=>setMode(mode==="reset"?"signin":"reset")} className="text-muted-foreground">{mode==="reset"?"Voltar ao login":"Esqueci minha senha"}</button></div>
-    </div></div></div>;
+  );
 }
 
 function RecoveryScreen({onDone}:{onDone:()=>void}){
