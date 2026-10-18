@@ -160,7 +160,7 @@ export async function slidePng(slide: SlideDraft, options: Parameters<typeof pai
   if (!ctx) throw new Error("O navegador não conseguiu preparar o editor de imagem.");
   let image:HTMLImageElement|undefined;
   if(slide.imageUrl){image=new Image();image.crossOrigin="anonymous";await new Promise<void>((resolve,reject)=>{image!.onload=()=>resolve();image!.onerror=()=>reject(new Error("A imagem não está disponível para exportação."));image!.src=slide.imageUrl!;});}
-  paintCarouselSlide(ctx,slide,{...options,image});
+  paintCarouselSlide(ctx,slide,{...options,...(image?{image}:{})});
   return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Erro ao criar PNG.")), "image/png"));
 }
 export function downloadBlob(blob: Blob, filename: string) {
