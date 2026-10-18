@@ -11,6 +11,7 @@ import { ContentEditor } from "@/components/app/content-editor";
 import { MediaLibrary } from "@/components/app/media-library";
 import { Sparkles, LayoutDashboard, Layers, Plus, LogOut, Palette, Instagram, CalendarDays, Settings, BookOpen, Clapperboard, Grid3X3, Image as ImageIcon, Copy, Trash2, Menu, Check, WandSparkles, Loader2, ArrowRight, ShieldCheck, Download } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
+import { checkGoogleProviderStatus, type ProviderStatus } from "@/lib/google-provider";
 
 export const Route = createFileRoute("/")({ component: InstaStudio });
 
@@ -56,15 +57,29 @@ function AuthScreen() {
   const [email,setEmail]=useState("");
   const [password,setPassword]=useState("");
   const [busy,setBusy]=useState(false);
+  const [googleStatus,setGoogleStatus]=useState<ProviderStatus>("unavailable");
+  const [googleMessage,setGoogleMessage]=useState("");
+  useEffect(()=>{
+    const ctrl=new AbortController();
+    void checkGoogleProviderStatus(import.meta.env.VITE_SUPABASE_URL ?? "",import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "",{signal:ctrl.signal}).then(status=>{if(!ctrl.signal.aborted)setGoogleStatus(status);});
+    return ()=>ctrl.abort();
+  },[]);
   async function googleLogin(){
     setBusy(true);
+    setGoogleMessage("");
     try{
+      const status=await checkGoogleProviderStatus(import.meta.env.VITE_SUPABASE_URL ?? "",import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "");
+      setGoogleStatus(status);
+      if(status!=="enabled"){
+        setGoogleMessage(status==="disabled"?"O login com Google ainda não foi habilitado no Supabase Auth do projeto. Ative Google em Authentication → Providers. Enquanto isso, use e-mail e senha.":"Não foi possível confirmar a disponibilidade do login com Google. Tente novamente ou utilize e-mail e senha.");
+        return;
+      }
       const {error}=await supabase.auth.signInWithOAuth({
         provider:"google",
         options:{redirectTo:window.location.origin + "/"},
       });
       if(error) throw error;
-    }catch(error){toast.error(error instanceof Error ? error.message : "Não foi possível iniciar o login Google.");}
+    }catch(error){const message=error instanceof Error ? error.message : "Não foi possível iniciar o login Google.";setGoogleMessage(message);toast.error(message);}
     finally{setBusy(false);}
   }
   async function submit(e:FormEvent){e.preventDefault();setBusy(true);try{
@@ -85,7 +100,7 @@ function AuthScreen() {
       {mode!=="reset"&&<label className="block text-sm font-semibold">Senha<input className={inputClass+" mt-2"} type="password" required minLength={6} autoComplete={mode==="signin"?"current-password":"new-password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder="Mínimo de 6 caracteres"/></label>}
       <button className={btn+" w-full"} disabled={busy}>{busy?<Loader2 className="size-4 animate-spin"/>:null}{mode==="signin"?"Entrar":mode==="signup"?"Criar conta":"Enviar link de recuperação"}<ArrowRight className="size-4"/></button></form>
       {mode!=="reset"&&<><div className="my-6 flex items-center gap-3 text-xs text-muted-foreground"><div className="h-px flex-1 bg-border"/>ou continue com<div className="h-px flex-1 bg-border"/></div>
-      <button type="button" aria-label="Entrar com sua conta Google" disabled={busy} onClick={googleLogin} className="inline-flex w-full items-center justify-center gap-3 rounded-xl border border-border bg-card px-5 py-3 text-sm font-semibold transition hover:bg-muted disabled:opacity-50"><span aria-hidden="true" className="font-extrabold text-lg text-[#4285F4]">G</span>Continuar com Google</button></>}
+      <button type="button" aria-label="Entrar com sua conta Google" disabled={busy} onClick={googleLogin} className="inline-flex w-full items-center justify-center gap-3 rounded-xl border border-border bg-card px-5 py-3 text-sm font-semibold transition hover:bg-muted disabled:opacity-50"><span aria-hidden="true" className="font-extrabold text-lg text-[#4285F4]">G</span>Continuar com Google</button>{googleStatus==="disabled"&&<p role="status" className="mt-3 text-sm text-amber-700 dark:text-amber-400">Google ainda não está habilitado no provedor de autenticação. Use e-mail e senha por enquanto.</p>}{googleMessage&&<p role="alert" className="mt-3 rounded-lg border border-amber-300/40 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-100">{googleMessage}</p>}</>}
       <div className="mt-6 flex flex-wrap justify-between gap-3 text-sm"><button onClick={()=>setMode(mode==="signup"?"signin":"signup")} className="font-semibold text-primary">{mode==="signup"?"Já tenho conta": "Criar uma conta"}</button><button onClick={()=>setMode(mode==="reset"?"signin":"reset")} className="text-muted-foreground">{mode==="reset"?"Voltar ao login":"Esqueci minha senha"}</button></div>
     </div></div></div>;
 }
