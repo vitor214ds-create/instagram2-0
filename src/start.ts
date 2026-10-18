@@ -24,6 +24,15 @@ const csrfMiddleware = createCsrfMiddleware({
   filter: (ctx) => ctx.handlerType === "serverFn",
 });
 
+// Attaches the signed-in user's bearer token to every server function call.
+const attachSupabaseAuth = createMiddleware({ type: "function" }).client(async ({ next }) => {
+  const { supabase } = await import("@/integrations/supabase/client");
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  return next({ headers: token ? { Authorization: `Bearer ${token}` } : {} });
+});
+
 export const startInstance = createStart(() => ({
   requestMiddleware: [errorMiddleware, csrfMiddleware],
+  functionMiddleware: [attachSupabaseAuth],
 }));
