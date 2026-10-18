@@ -24,7 +24,7 @@ export async function checkGoogleProviderStatus(
     const response = await (options.fetcher ?? fetch)(url, {
       method: "GET",
       headers: { apikey: publishableKey, Accept: "application/json" },
-      signal: options.signal,
+      ...(options.signal ? { signal: options.signal } : {}),
     });
     if (!response.ok) return "unavailable";
     return parseGoogleProviderStatus(await response.json());
