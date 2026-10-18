@@ -200,5 +200,11 @@ export async function zipPngs(files: { name: string; blob: Blob }[]): Promise<Bl
   write32(ev, 0, 0x06054b50);
   write16(ev, 8, files.length); write16(ev, 10, files.length);
   write32(ev, 12, centralLength); write32(ev, 16, offset);
-  return new Blob([...parts, ...central, end], { type: "application/zip" });
+  const combined = [...parts, ...central, end];
+  const byteLength = combined.reduce((sum, part) => sum + part.byteLength, 0);
+  const buffer = new ArrayBuffer(byteLength);
+  const output = new Uint8Array(buffer);
+  let position = 0;
+  for (const part of combined) { output.set(part, position); position += part.byteLength; }
+  return new Blob([buffer], { type: "application/zip" });
 }
