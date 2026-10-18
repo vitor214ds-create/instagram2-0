@@ -58,3 +58,35 @@ export async function generateStructured<T extends z.ZodTypeAny>(schema: T, inst
     throw new AiError("A IA não conseguiu gerar uma resposta válida. Tente novamente.", status);
   }
 }
+
+/** Generate a real image through the project's Lovable AI Gateway.
+ * Executed only on the server and only after explicit user confirmation.
+ */
+export async function generateCarouselImagePng(prompt: string): Promise<{ bytes: Uint8Array; mediaType: string }> {
+  const apiKey = process.env["LOVABLE_API_KEY"];
+  if (!apiKey) throw new AiError("A geração de imagens com IA precisa de créditos e da integração Lovable AI ativa.", 401);
+  const { generateImage } = await import("ai");
+  const client = createOpenAI({
+    baseURL: GATEWAY,
+    apiKey,
+    headers: { "Lovable-API-Key": apiKey, "X-Lovable-AIG-SDK": "vercel-ai-sdk" },
+  });
+  try {
+    const result = await generateImage({
+      model: client.image("openai/gpt-image-2"),
+      prompt,
+      size: "1024x1536",
+      n: 1,
+      maxRetries: 1,
+    });
+    if (!result.image?.uint8Array?.byteLength) throw new AiError("A IA não retornou uma imagem válida.");
+    return { bytes: result.image.uint8Array, mediaType: result.image.mediaType || "image/png" };
+  } catch (err) {
+    const status = (err as { statusCode?: number })?.statusCode;
+    if (status === 402) throw new AiError("Sem créditos disponíveis para gerar imagens no Lovable.", 402);
+    if (status === 429) throw new AiError("Limite de geração atingido. Tente mais tarde.", 429);
+    if (status === 400 || status === 404) throw new AiError("O modelo de imagens ainda não está disponível neste workspace. Utilize imagem própria.", status);
+    if (status === 401 || status === 403) throw new AiError("A geração de imagens não foi habilitada para este projeto.", status);
+    throw err;
+  }
+}
