@@ -57,7 +57,7 @@ export function CarouselStudio({projectId,items,palette,handle}:{projectId:strin
      if(!raw||typeof raw!=="object"||Array.isArray(raw))return;
      const doc=raw as {version?:number;mode?:string;slides?:Array<{slideId?:string;prompt?:string;path?:string;background?:string;composition?:string}>};
      if(doc.version!==2||!Array.isArray(doc.slides))return;
-     setVisualDoc({version:2,mode:doc.mode,slides:doc.slides});
+     setVisualDoc({version:2,...(doc.mode?{mode:doc.mode}:{}),slides:doc.slides});
      const updated=await Promise.all(doc.slides.map(async entry=>{
        if(!entry.path)return {...entry,url:""};
        const {data:signed}=await supabase.storage.from("media").createSignedUrl(entry.path,3600);
@@ -91,7 +91,7 @@ export function CarouselStudio({projectId,items,palette,handle}:{projectId:strin
   try{
     const response=await generateCarouselImage({data:{projectId,contentId:id,slideId:slide.id,prompt}});
     const docs=visualDoc?.slides??[];
-    const next=slides.map((item,index)=>({slideId:item.id,prompt:item.visualPrompt||docs[index]?.prompt||"",path:item.id===slide.id?response.path:item.imagePath||docs[index]?.path||"",background:docs[index]?.background||"",composition:docs[index]?.composition||""}));
+    const next=slides.map((item,index)=>({...(item.id?{slideId:item.id}:{}),prompt:item.visualPrompt||docs[index]?.prompt||"",path:item.id===slide.id?response.path:item.imagePath||docs[index]?.path||"",background:docs[index]?.background||"",composition:docs[index]?.composition||""}));
     const {data:docRow}=await supabase.from("design_documents").select("id").eq("project_id",projectId).eq("content_id",id).maybeSingle();
     const {error}=docRow?await supabase.from("design_documents").update({layers:{version:2,mode:visualDoc?.mode||"education",slides:next}}).eq("id",docRow.id):await supabase.from("design_documents").insert({project_id:projectId,content_id:id,width:1080,height:1350,layers:{version:2,mode:visualDoc?.mode||"education",slides:next}});
     if(error)throw error;
@@ -114,7 +114,7 @@ export function CarouselStudio({projectId,items,palette,handle}:{projectId:strin
      if(uploaded.error)throw uploaded.error;
      const asset=await supabase.from("media_assets").insert({project_id:projectId,storage_path:path,kind:"image",label:file.name});
      if(asset.error)throw asset.error;
-     const next=slides.map((x,index)=>({slideId:x.id,prompt:x.visualPrompt||visualDoc?.slides?.[index]?.prompt||"",path:index===active?path:x.imagePath||visualDoc?.slides?.[index]?.path||""}));
+     const next=slides.map((x,index)=>({...(x.id?{slideId:x.id}:{}),prompt:x.visualPrompt||visualDoc?.slides?.[index]?.prompt||"",path:index===active?path:x.imagePath||visualDoc?.slides?.[index]?.path||""}));
      const {data:docRow}=await supabase.from("design_documents").select("id").eq("project_id",projectId).eq("content_id",id).maybeSingle();
      const result=docRow?await supabase.from("design_documents").update({layers:{version:2,mode:visualDoc?.mode||"education",slides:next}}).eq("id",docRow.id):await supabase.from("design_documents").insert({project_id:projectId,content_id:id,width:1080,height:1350,layers:{version:2,mode:visualDoc?.mode||"education",slides:next}});
      if(result.error)throw result.error;
