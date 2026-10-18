@@ -509,6 +509,7 @@ export type Database = {
     }
     Functions: {
       owns_project: { Args: { _project_id: string }; Returns: boolean }
+      owns_project_path: { Args: { _name: string }; Returns: boolean }
     }
     Enums: {
       [_ in never]: never
