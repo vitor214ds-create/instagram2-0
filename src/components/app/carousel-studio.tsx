@@ -49,10 +49,12 @@ export function CarouselStudio({projectId,items,palette,handle}:{projectId:strin
    const parent=id?await supabase.from("content_items").update({title:title.trim(),caption,hashtags}).eq("id",id).eq("project_id",projectId).select("id").single():await supabase.from("content_items").insert({project_id:projectId,title:title.trim(),caption,hashtags,type:"carousel",status:"draft"}).select("id").single();
    if(parent.error)throw parent.error;
    const contentId=parent.data.id;
+   const prior=id?await supabase.from("content_slides").select("id").eq("content_id",id).eq("project_id",projectId):null;
+   if(prior?.error)throw prior.error;
    const rows=slides.map((s,i)=>({...(s.id?{id:s.id}:{}),content_id:contentId,project_id:projectId,heading:s.heading.trim(),body:s.body,position:i}));
    const saved=await supabase.from("content_slides").upsert(rows,{onConflict:"id"});
    if(saved.error)throw saved.error;
-   if(id){const {data:prior,error:readErr}=await supabase.from("content_slides").select("id").eq("content_id",id).eq("project_id",projectId);if(readErr)throw readErr;const keep=new Set(slides.map(s=>s.id).filter(Boolean));const gone=(prior??[]).map(s=>s.id).filter(s=>!keep.has(s));if(gone.length){const deleted=await supabase.from("content_slides").delete().eq("project_id",projectId).eq("content_id",contentId).in("id",gone);if(deleted.error)throw deleted.error;}}
+   if(prior?.data){const keep=new Set(slides.map(s=>s.id).filter(Boolean));const gone=prior.data.map(s=>s.id).filter(x=>!keep.has(x));if(gone.length){const deleted=await supabase.from("content_slides").delete().eq("project_id",projectId).eq("content_id",contentId).in("id",gone);if(deleted.error)throw deleted.error;}}
    await refresh();toast.success("Carrossel salvo.");setEditing(false);
   }catch(e){toast.error(e instanceof Error?e.message:"Falha ao salvar.");}finally{setBusy(false);}
  }
