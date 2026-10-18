@@ -34,8 +34,11 @@ export const projectQuery = (id: string) =>
 export const brandKitQuery = (projectId: string) =>
   queryOptions({
     queryKey: ["brand_kit", projectId],
-    queryFn: async () =>
-      check(await supabase.from("brand_kits").select("*").eq("project_id", projectId).maybeSingle()),
+    queryFn: async (): Promise<BrandKit | null> => {
+      const {data, error}=await supabase.from("brand_kits").select("*").eq("project_id", projectId).maybeSingle();
+      if(error) throw new Error(error.message);
+      return data as BrandKit | null;
+    },
   });
 
 export const suggestionsQuery = (projectId: string) =>
