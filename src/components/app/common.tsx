@@ -74,7 +74,7 @@ export function ProjectPicker() {
   const { projects, current, select } = useActiveProject();
   if (!projects.length) return null;
   return (
-    <Select value={current?.id} onValueChange={select}>
+    <Select value={current?.id ?? ""} onValueChange={select}>
       <SelectTrigger className="w-[220px] bg-card">
         <SelectValue placeholder="Escolha um perfil" />
       </SelectTrigger>
@@ -101,7 +101,7 @@ export function WithProject({ children }: { children: (p: Project) => ReactNode 
         description="Tudo no InstaStudio AI é organizado por perfil planejado. Comece com um briefing simples."
         action={
           <Button variant="hero" asChild>
-            <Link to="/perfis/novo">Criar perfil</Link>
+            <Link to="/">Criar perfil</Link>
           </Button>
         }
       />
